@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.AsyncTask;
+import android.os.Handler;
+import android.os.Message;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.text.TextUtils;
@@ -38,6 +40,11 @@ import static com.gettipsi.stripe.util.InitializationOptions.ANDROID_PAY_MODE_PR
 import static com.gettipsi.stripe.util.InitializationOptions.ANDROID_PAY_MODE_TEST;
 import static com.gettipsi.stripe.util.InitializationOptions.PUBLISHABLE_KEY;
 
+import java.util.Map;
+
+import com.alipay.sdk.app.PayTask;
+
+
 public class StripeModule extends ReactContextBaseJavaModule {
 
   private static final String MODULE_NAME = StripeModule.class.getSimpleName();
@@ -54,6 +61,7 @@ public class StripeModule extends ReactContextBaseJavaModule {
 
   @Nullable
   private Promise mCreateSourcePromise;
+  private Handler mHandler;
 
   @Nullable
   private Source mCreatedSource;
@@ -215,6 +223,8 @@ public class StripeModule extends ReactContextBaseJavaModule {
     getPayFlow().paymentRequestWithAndroidPay(payParams, promise);
   }
 
+  private static final int SDK_PAY_FLAG = 1;
+
   @ReactMethod
   public void createSourceWithParams(final ReadableMap options, final Promise promise) {
     String sourceType = options.getString("type");
@@ -281,6 +291,8 @@ public class StripeModule extends ReactContextBaseJavaModule {
 
     ArgCheck.nonNull(sourceParams);
 
+    final boolean useSDK =  (sourceType.equals("alipay") && options.hasKey("useSDK")) ? options.getBoolean("useSDK") : false;
+
     mStripe.createSource(sourceParams, new SourceCallback() {
       @Override
       public void onError(Exception error) {
@@ -288,28 +300,86 @@ public class StripeModule extends ReactContextBaseJavaModule {
       }
 
       @Override
-      public void onSuccess(Source source) {
+      public void onSuccess(final Source source) {
         if (Source.REDIRECT.equals(source.getFlow())) {
-          Activity currentActivity = getCurrentActivity();
-          if (currentActivity == null) {
-            promise.reject(
-              getErrorCode(mErrorCodes, "activityUnavailable"),
-              getDescription(mErrorCodes, "activityUnavailable")
-            );
-          } else {
-            mCreateSourcePromise = promise;
-            mCreatedSource = source;
-            String redirectUrl = source.getRedirect().getUrl();
-            Intent browserIntent = new Intent(currentActivity, OpenBrowserActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra(OpenBrowserActivity.EXTRA_URL, redirectUrl);
-            currentActivity.startActivity(browserIntent);
+          if (useSDK){
+            mHandler = new Handler(getReactApplicationContext().getMainLooper()) {
+              @Override
+              public void handleMessage(Message msg) {
+                switch (msg.what) {
+                  case SDK_PAY_FLAG:
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> answer = (Map<String, String>) msg.obj;
+                    // The result info contains other information about the transaction
+                    String resultInfo = answer.get("result");
+                    String resultStatus = answer.get("resultStatus");
+                    if (TextUtils.equals(resultStatus, "9000")) {
+                      promise.resolve(convertSourceToWritableMap(source));
+                    } else {
+                      promise.reject(resultStatus, resultInfo);
+                    }
+                    break;
+                  default:
+                    break;
+                }
+              }
+            };
+            if (!invokeAlipayNative(source)){
+              promise.reject("notConfigured", "Empty data string - is Alipay configured in stripe correctly");
+            };
+          }
+          else {
+            Activity currentActivity = getCurrentActivity();
+            if (currentActivity == null) {
+              promise.reject(
+                      getErrorCode(mErrorCodes, "activityUnavailable"),
+                      getDescription(mErrorCodes, "activityUnavailable")
+              );
+            } else {
+              mCreateSourcePromise = promise;
+              mCreatedSource = source;
+              String redirectUrl = source.getRedirect().getUrl();
+              Intent browserIntent = new Intent(currentActivity, OpenBrowserActivity.class)
+                      .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                      .putExtra(OpenBrowserActivity.EXTRA_URL, redirectUrl);
+              currentActivity.startActivity(browserIntent);
+            }
           }
         } else {
           promise.resolve(convertSourceToWritableMap(source));
         }
       }
     });
+  }
+  private boolean invokeAlipayNative(Source source) {
+    Map<String, Object> alipayParams = source.getSourceTypeData();
+    final String dataString = (alipayParams.get("data_string") != null) ?   (String) alipayParams.get("data_string"): "";
+    if (dataString.length() < 1){
+       return false;
+    }
+
+    Runnable payRunnable = new Runnable() {
+      @Override
+      public void run() {
+        // The PayTask class is from the Alipay SDK. Do not run this function
+        // on the main thread.
+        Activity currentActivity = getCurrentActivity();
+        PayTask alipay = new PayTask(currentActivity);
+        // Invoking this function immediately takes the user to the Alipay
+        // app, if in stalled. If not, the user is sent to the browser.
+        Map<String, String> result = alipay.payV2(dataString, true);
+
+        // Once you get the result, communicate it back to the main thread
+        Message msg = new Message();
+        msg.what = SDK_PAY_FLAG;
+        msg.obj = result;
+        mHandler.sendMessage(msg);
+      }
+    };
+
+    Thread payThread = new Thread(payRunnable);
+    payThread.start();
+    return true;
   }
 
   void processRedirect(@Nullable Uri redirectData) {

@@ -333,7 +333,9 @@ RCT_EXPORT_METHOD(createSourceWithParams:(NSDictionary *)params
                         }];
                     }
                 }];
-                [self.redirectContext startSafariAppRedirectFlow];
+                UIViewController * rootView = [UIApplication.sharedApplication.delegate.window rootViewController];
+                [self.redirectContext startRedirectFlowFromViewController:rootView];
+
             } else {
                 resolve([self convertSourceObject:source]);
             }

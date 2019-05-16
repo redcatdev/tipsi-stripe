@@ -199,7 +199,8 @@ public class Converters {
       getValue(cardData, "funding"),
       getValue(cardData, "country"),
       getValue(cardData, "currency"),
-      getValue(cardData, "id")
+      getValue(cardData, "id"),
+      null
     );
   }
 
@@ -397,8 +398,8 @@ public class Converters {
       accountData.getString("currency"),
       getValue(accountData, "routingNumber", "")
     );
-    account.setAccountHolderName(getValue(accountData, "accountHolderName"));
-    account.setAccountHolderType(getValue(accountData, "accountHolderType"));
+    //account.setAccountHolderName(getValue(accountData, "accountHolderName"));
+    //account.setAccountHolderType(getValue(accountData, "accountHolderType"));
 
     return account;
   }
