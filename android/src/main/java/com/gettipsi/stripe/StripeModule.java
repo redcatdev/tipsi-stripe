@@ -353,9 +353,15 @@ public class StripeModule extends ReactContextBaseJavaModule {
   }
   private boolean invokeAlipayNative(Source source) {
     Map<String, Object> alipayParams = source.getSourceTypeData();
-    final String dataString = (alipayParams.get("data_string") != null) ?   (String) alipayParams.get("data_string"): "";
-    if (dataString.length() < 1){
-       return false;
+    final String dataString;
+    try {
+      dataString = (alipayParams.get("data_string") != null) ? (String) alipayParams.get("data_string") : "";
+      if (dataString.length() < 1) {
+        return false;
+      }
+    }
+    catch (Exception e){
+      return false;
     }
 
     Runnable payRunnable = new Runnable() {
